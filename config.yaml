@@ -1,0 +1,171 @@
+# =========================================================================
+# QuantBot configuration
+# Credentials use ${ENV_VAR} expansion — never commit secrets to this file.
+#   Windows:  setx MT5_LOGIN 12345678
+#   bash:     export MT5_LOGIN=12345678
+# =========================================================================
+
+broker:
+  type: mt5                       # mt5 | paper
+  login: ${MT5_LOGIN}
+  password: ${MT5_PASSWORD}
+  server: ${MT5_SERVER}           # e.g. Exness-MT5Real8 / Exness-MT5Trial14
+  terminal_path: null             # e.g. C:/Program Files/MetaTrader 5/terminal64.exe
+  magic_base: 770000
+  deviation_points: 20
+  dry_run: true                   # <<< START HERE. Logs orders, sends nothing.
+
+# --- universe -------------------------------------------------------------
+universe:
+  # explicit list, or use `auto` to pull everything from the terminal
+  symbols: [EURUSD, GBPUSD, USDJPY, AUDUSD, XAUUSD]
+  auto:
+    enabled: false
+    groups: [forex, metals]       # forex metals indices crypto energy stocks
+    max_symbols: 30
+    max_spread_points: 30         # drop expensive instruments at startup
+
+# --- money management -----------------------------------------------------
+sizing:
+  risk_per_trade: 0.005           # 0.5% of equity per trade
+  max_volume: null
+  min_stop_buffer_spreads: 1.5
+
+limits:
+  max_open_positions: 6
+  max_positions_per_symbol: 1
+  max_positions_per_group: 3
+  max_positions_per_strategy: 3
+  max_total_risk: 0.025           # 2.5% aggregate open risk
+  daily_loss_limit: 0.04
+  max_drawdown_limit: 0.18
+  max_spread_atr_ratio: 0.25
+  max_spread_points:
+    forex: 25
+    metals: 60
+    indices: 200
+    crypto: 5000
+    default: 50
+  trading_hours_utc: [6, 20]      # null = 24h
+  blocked_weekdays: []            # [4] to skip Fridays
+  allow_hedging: false
+
+# --- backtest -------------------------------------------------------------
+backtest:
+  starting_balance: 10000
+  costs:
+    slippage_points: 2.0
+    spread_points:
+      forex: 12
+      metals: 25
+      default: 15
+    commission_per_lot:
+      forex: 7.0
+      metals: 7.0
+      default: 5.0
+
+live:
+  poll_seconds: 5
+  heartbeat_minutes: 30
+  state_path: state/live_state.json
+  close_on_shutdown: false
+
+logging:
+  level: INFO
+  file: logs/quantbot.log
+
+# =========================================================================
+# STRATEGIES — add as many blocks as you like. Same class can appear twice
+# with different params/timeframes; `instance` keeps them distinct.
+# =========================================================================
+strategies:
+
+  - name: ema_atr_trend
+    instance: trend_h1
+    timeframe: H1
+    symbols: [EURUSD, GBPUSD, AUDUSD]
+    risk_multiplier: 1.0
+    params:
+      fast: 21
+      slow: 55
+      trend: 200
+      adx_min: 18
+      pullback_atr: 0.6
+    # Dynamic SL: ATR base, to breakeven at 1R, then chandelier trail from 1.5R
+    stop:
+      - type: atr
+        mult: 2.0
+        period: 14
+      - type: breakeven
+        trigger_r: 1.0
+        offset_r: 0.1
+      - type: trail_after
+        trigger_r: 1.5
+        inner:
+          type: chandelier
+          lookback: 20
+          mult: 2.5
+      - type: time
+        max_bars: 120
+    target:
+      type: r
+      multiples: [1.0, 2.5]
+      fractions: [0.5, 0.3]       # 20% runs on the trail
+
+  - name: donchian_breakout
+    instance: breakout_h4
+    timeframe: H4
+    symbols: [XAUUSD, EURUSD]
+    risk_multiplier: 0.8
+    params:
+      channel: 20
+      squeeze_pct: 0.4
+      confirm_close: true
+    stop:
+      - type: structure
+        lookback: 10
+        atr_pad: 0.3
+      - type: step_trail
+        step_r: 1.0
+        lock_r: 0.4
+    target:
+      type: atr
+      multiples: [2.0, 4.0]
+      fractions: [0.5, 0.5]
+
+  # Enable after running scripts/train.py
+  - name: ml_barrier
+    instance: ml_h1
+    timeframe: H1
+    enabled: false
+    symbols: [EURUSD]
+    params:
+      model_path: models/ml_h1_eurusd.joblib
+      long_threshold: 0.58
+      short_threshold: 0.58
+      size_by_probability: true
+    # IMPORTANT: mult here must equal barrier.loss_atr used in training
+    stop:
+      - type: atr
+        mult: 1.0
+        period: 14
+      - type: breakeven
+        trigger_r: 1.2
+    target:
+      type: r
+      multiples: [2.0]            # == barrier.profit_atr / barrier.loss_atr
+      fractions: [1.0]
+
+# --- ML training defaults (scripts/train.py) ------------------------------
+ml:
+  barrier:
+    profit_atr: 2.0
+    loss_atr: 1.0
+    max_hold: 24
+    atr_period: 14
+  n_splits: 5
+  embargo: 48
+  calibrate: true
+  learning_rate: 0.05
+  max_depth: 4
+  min_samples_leaf: 40

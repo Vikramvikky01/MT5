@@ -1,0 +1,12 @@
+# core
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+joblib>=1.3
+pyyaml>=6.0
+
+# live trading (Windows only — see README for macOS/Linux options)
+MetaTrader5>=5.0.45 ; platform_system == "Windows"
+
+# dev
+pytest>=7.4
